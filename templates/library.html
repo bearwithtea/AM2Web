@@ -29,28 +29,6 @@
         </nav>
 
         <div class="main-content">
-            <div class="upload-section">
-                <form method="post" action="{{ url_for('library') }}" enctype="multipart/form-data">
-                    <div class="upload-area">
-                        <div class="upload-content">
-                            <div class="upload-text">
-                                <label for="file-upload" class="upload-button">
-                                    <span>Upload Library XML</span>
-                                    <input
-                                        id="file-upload"
-                                        name="file"
-                                        type="file"
-                                        class="hidden"
-                                        accept=".xml"
-                                    />
-                                </label>
-                            </div>
-                        </div>
-                    </div>
-                    <button type="submit" class="submit-button">Upload</button>
-                </form>
-            </div>
-
             <div class="stats-grid">
                 {% for i in range(0, monthly_stats|length, 3) %}
                     <div class="stats-row">

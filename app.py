@@ -45,47 +45,75 @@ def insert_songs_to_db(user_id, songs):
 
     for song in songs:
         try:
+            # Construct the values tuple, ensuring user_id is at the end for user_fk_id
             values = (
-                user_id, song.get("Track ID"), song.get("Name"), song.get("Artist"),
-                song.get("Album Artist"), song.get("Composer"), song.get("Album"),
-                song.get("Genre"), song.get("Kind"), song.get("Size"),
-                song.get("Total Time"), song.get("Disc Number"), song.get("Disc Count"),
-                song.get("Track Number"), song.get("Track Count"), song.get("Year"),
-                song.get("Date Modified"), song.get("Date Added"), song.get("Play Count"),
-                song.get("Play Date"), song.get("Play Date UTC"), song.get("Skip Count"),
-                song.get("Skip Date"), song.get("Release Date"), song.get("Favorited", False),
-                song.get("Loved", False), song.get("Artwork Count"), song.get("Sort Album"),
-                song.get("Sort Artist"), song.get("Sort Name"), song.get("Persistent ID"),
-                song.get("Track Type"), song.get("Protected", False),
-                song.get("Apple Music", False), song.get("Location"),
-                song.get("File Folder Count"), song.get("Library Folder Count"),
+                song.get("Track ID"),
+                song.get("Name"),
+                song.get("Artist"),
+                song.get("Album Artist"),
+                song.get("Composer"),
+                song.get("Album"),
+                song.get("Genre"),
+                song.get("Kind"),
+                song.get("Size"),
+                song.get("Total Time"),
+                song.get("Disc Number"),
+                song.get("Disc Count"),
+                song.get("Track Number"),
+                song.get("Track Count"),
+                song.get("Year"),
+                song.get("Date Modified"),
+                song.get("Date Added"),
+                song.get("Play Count"),
+                song.get("Play Date"),
+                song.get("Play Date UTC"),
+                song.get("Skip Count"),
+                song.get("Skip Date"),
+                song.get("Release Date"),
+                song.get("Favorited", False),
+                song.get("Loved", False),
+                song.get("Artwork Count"),
+                song.get("Sort Album"),
+                song.get("Sort Artist"),
+                song.get("Sort Name"),
+                song.get("Persistent ID"),
+                song.get("Track Type"),
+                song.get("Protected", False),
+                song.get("Apple Music", False),
+                song.get("Location"),
+                song.get("File Folder Count"),
+                song.get("Library Folder Count"),
+                user_id # This value is for the user_fk_id column
             )
 
             cursor.execute(
                 """
                 INSERT INTO songs (
-                    id, track_id, name, artist, album_artist, composer, album, genre,
+                    track_id, name, artist, album_artist, composer, album, genre,
                     kind, size, total_time, disc_number, disc_count, track_number,
                     track_count, year, date_modified, date_added, play_count,
                     play_date, play_date_utc, skip_count, skip_date, release_date,
                     favorited, loved, artwork_count, sort_album, sort_artist,
                     sort_name, persistent_id, track_type, protected, apple_music,
-                    location, file_folder_count, library_folder_count
+                    location, file_folder_count, library_folder_count, user_fk_id -- Exclude 'id' as it's auto-incremented
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                           %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                          %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
+                          %s, %s, %s, %s, %s, %s, %s, %s, %s) -- 37 placeholders for 37 columns
+                """,
                 values,
             )
             inserted_count += 1
         except mysql.connector.Error as e:
-            print(f"Error inserting song {song.get('Name')}: {e}")
+            print(f"Error inserting song: {song.get('Name')} (Track ID: {song.get('Track ID')})")
+            print(f"Error details: {e}")
+            print(f"Values attempted to insert: {values}")
             continue
 
     conn.commit()
     cursor.close()
     conn.close()
     return inserted_count
+
 
 def get_album_artwork(artist, album):
     network = pylast.LastFMNetwork(api_key=os.getenv("LASTFM_API_KEY"))
@@ -104,7 +132,7 @@ def home():
 def library():
     user_id = session["user_id"]
 
-    # Handle file upload
+    # Handle file upload (keep your existing upload logic here)
     if request.method == "POST":
         if "file" not in request.files:
             flash("No file part")
@@ -122,6 +150,7 @@ def library():
 
             try:
                 songs = parse_itunes_library(filepath)
+                # Use the insert_songs_to_db with INSERT IGNORE or ON DUPLICATE KEY UPDATE
                 inserted_count = insert_songs_to_db(user_id, songs)
                 flash(f"Successfully imported {inserted_count} songs!")
                 os.remove(filepath)
@@ -134,8 +163,9 @@ def library():
     conn = mysql.connector.connect(**db_config)
     cursor = conn.cursor(dictionary=True)
 
-    cursor.execute("""
-    WITH MonthlyPlays AS (
+    # Corrected SQL Query to group by month and year for the current year
+    sql_query = """
+        WITH MonthlyPlays AS (
         SELECT
             CASE MONTH(play_date_utc)
                 WHEN 1 THEN 'Jan.'
@@ -156,9 +186,9 @@ def library():
             album,
             total_time
         FROM songs
-        WHERE id = %(user_id)s
-            AND play_date_utc IS NOT NULL
-            AND YEAR(play_date_utc) = YEAR(CURDATE())
+        WHERE user_fk_id = %(user_id)s -- Filter by the user
+            AND play_date_utc IS NOT NULL -- Ensure play date exists
+            AND YEAR(play_date_utc) = YEAR(CURDATE()) -- Filter for the current year
     ),
     ArtistPlays AS (
         SELECT
@@ -179,25 +209,40 @@ def library():
             ROW_NUMBER() OVER (PARTITION BY month, year ORDER BY COUNT(*) DESC) as rn
         FROM MonthlyPlays
         GROUP BY month, year, album
+    ),
+    -- New CTE to aggregate total minutes per month/year
+    MonthlyAggregations AS (
+        SELECT
+            month,
+            year,
+            ROUND(SUM(total_time)/1000/60, 0) as minutes_played
+        FROM MonthlyPlays
+        GROUP BY month, year
     )
+    -- Final SELECT joins the aggregated minutes with the top artist and album
     SELECT
-        mp.month,
-        mp.year,
+        ma.month,
+        ma.year,
         ap.artist as top_artist,
         alp.album as top_album,
-        ROUND(SUM(mp.total_time)/1000/60, 0) as minutes_played
-    FROM MonthlyPlays mp
-    LEFT JOIN ArtistPlays ap ON mp.month = ap.month
-        AND mp.year = ap.year
+        ma.minutes_played
+    FROM MonthlyAggregations ma
+    LEFT JOIN ArtistPlays ap ON ma.month = ap.month
+        AND ma.year = ap.year
         AND ap.rn = 1
-    LEFT JOIN AlbumPlays alp ON mp.month = alp.month
-        AND mp.year = alp.year
+    LEFT JOIN AlbumPlays alp ON ma.month = alp.month
+        AND ma.year = alp.year
         AND alp.rn = 1
-    GROUP BY mp.month, mp.year, ap.artist, alp.album
-    ORDER BY mp.month DESC
-    """, {'user_id': user_id})
+    -- No final GROUP BY needed here as MonthlyAggregations is already grouped
+    ORDER BY ma.year DESC, FIELD(ma.month, 'Jan.', 'Feb.', 'Mar.', 'Apr.', 'May', 'Jun.', 'Jul.', 'Aug.', 'Sep.', 'Oct.', 'Nov.', 'Dec.') DESC;
+    """
 
+    cursor.execute(sql_query, {'user_id': user_id})
     monthly_stats = cursor.fetchall()
+
+    # Print the fetched data to see exactly what is returned
+    print("Monthly stats fetched from DB:")
+    print(monthly_stats)
 
     cursor.close()
     conn.close()
